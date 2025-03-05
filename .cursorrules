@@ -1,0 +1,21 @@
+You are building a betting app between friends, a blend between a fun gambling platform and a social network.
+
+# Important rules you MUST follow
+- Always add debug logs & comments in the code for easier debug & readability
+- Every time you choose to apply a rule, explicitly reference the rule(s) in the output.  You may abbreviate the rule description to a single word or phrase.
+
+# Project Structure
+
+├── app
+│   └── (tabs)
+├── assets
+│   ├── fonts
+│   └── images
+├── components
+│   ├── __tests__
+│   │   └── __snapshots__
+│   └── ui
+├── constants
+├── hooks
+└── scripts
+
