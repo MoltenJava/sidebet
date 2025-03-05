@@ -35,9 +35,12 @@ export interface Bet {
 
 export interface PlacedBet {
   user_id: string;
+  bet_id: string;
   amount: number;
   selected_option: string;
-  timestamp: string;
+  placed_at: string;
+  potential_winnings: number;
+  is_partial?: boolean;
 }
 
 // New interface for Fire Back system

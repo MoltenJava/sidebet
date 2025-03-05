@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Image, FlatList, TouchableOpacity, ActivityIndicator, View, Modal, TouchableWithoutFeedback, ScrollView, Alert } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/ThemedText';
@@ -218,26 +219,56 @@ export default function ProfileScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      {/* Profile header */}
+      {/* Profile header with improved layout and aspect ratio */}
       {user && (
-        <ThemedView style={styles.profileHeader}>
-          <Image 
-            source={{ uri: user.profile_image || `https://i.pravatar.cc/150?u=${user.user_id}` }} 
-            style={styles.profileImage} 
-          />
-          <View style={styles.profileInfo}>
-            <ThemedText style={styles.username}>{user.username}</ThemedText>
-            <View style={styles.walletContainer}>
-              <Ionicons name="wallet-outline" size={16} color={Colors.light.tint} />
-              <ThemedText style={styles.walletBalance}>
-                ${user.wallet_balance.toFixed(2)}
-              </ThemedText>
+        <LinearGradient
+          colors={['rgba(0,0,0,0.02)', 'rgba(0,0,0,0)']}
+          style={styles.profileHeaderGradient}
+        >
+          <ThemedView style={styles.profileHeader}>
+            <View style={styles.profileImageContainer}>
+              <Image 
+                source={{ uri: user.profile_image || `https://i.pravatar.cc/150?u=${user.user_id}` }} 
+                style={styles.profileImage} 
+              />
+              <View style={styles.statusDot}></View>
             </View>
-          </View>
-        </ThemedView>
+            
+            <View style={styles.profileInfo}>
+              <ThemedText style={styles.username}>{user.username}</ThemedText>
+              <View style={styles.statsContainer}>
+                {/* Card for wallet balance */}
+                <View style={styles.statCard}>
+                  <View style={styles.statIconContainer}>
+                    <Ionicons name="wallet-outline" size={18} color={Colors.light.tint} />
+                  </View>
+                  <View>
+                    <ThemedText style={styles.statValue}>
+                      ${user.wallet_balance.toFixed(2)}
+                    </ThemedText>
+                    <ThemedText style={styles.statLabel}>Balance</ThemedText>
+                  </View>
+                </View>
+                
+                {/* Card for bet count */}
+                <View style={styles.statCard}>
+                  <View style={styles.statIconContainer}>
+                    <Ionicons name="analytics-outline" size={18} color="#ff8c00" />
+                  </View>
+                  <View>
+                    <ThemedText style={styles.statValue}>
+                      {placedBets.length}
+                    </ThemedText>
+                    <ThemedText style={styles.statLabel}>Total Bets</ThemedText>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </ThemedView>
+        </LinearGradient>
       )}
       
-      {/* Tabs */}
+      {/* Improved Tabs */}
       <View style={styles.tabsContainer}>
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'active' && styles.activeTab]}
@@ -249,6 +280,7 @@ export default function ProfileScreen() {
           ]}>
             Active Bets
           </ThemedText>
+          {activeTab === 'active' && <View style={styles.activeTabIndicator} />}
         </TouchableOpacity>
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'history' && styles.activeTab]}
@@ -260,10 +292,11 @@ export default function ProfileScreen() {
           ]}>
             Bet History
           </ThemedText>
+          {activeTab === 'history' && <View style={styles.activeTabIndicator} />}
         </TouchableOpacity>
       </View>
       
-      {/* Bets list */}
+      {/* Bets list with improved card design */}
       <FlatList
         data={getFilteredBets()}
         keyExtractor={(item) => `${item.user_id}-${item.bet_id}`}
@@ -294,17 +327,13 @@ export default function ProfileScreen() {
         onRequestClose={handleCloseModal}
       >
         <TouchableWithoutFeedback onPress={handleCloseModal}>
-          <View style={styles.modalBackdrop}>
-            <TouchableWithoutFeedback>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalContent}>
-                <View style={styles.dragIndicator} />
                 <View style={styles.modalHeader}>
                   <ThemedText style={styles.modalTitle}>Bet Details</ThemedText>
-                  <TouchableOpacity
-                    style={styles.closeButton}
-                    onPress={handleCloseModal}
-                  >
-                    <Ionicons name="close" size={24} color="#fff" />
+                  <TouchableOpacity onPress={handleCloseModal} style={styles.closeButton}>
+                    <Ionicons name="close" size={24} color="#888" />
                   </TouchableOpacity>
                 </View>
                 
@@ -333,7 +362,7 @@ export default function ProfileScreen() {
                           </View>
                           <View style={styles.detailRow}>
                             <ThemedText style={styles.detailLabel}>Potential Winnings:</ThemedText>
-                            <ThemedText style={styles.detailValue}>${selectedBet.potential_winnings.toFixed(2)}</ThemedText>
+                            <ThemedText style={styles.detailValue}>${calculateWinnings(selectedBet).toFixed(2)}</ThemedText>
                           </View>
                           <View style={styles.detailRow}>
                             <ThemedText style={styles.detailLabel}>Placed On:</ThemedText>
@@ -417,142 +446,204 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
   },
+  profileHeaderGradient: {
+    paddingTop: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+  },
   profileHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
+    paddingHorizontal: 16,
+  },
+  profileImageContainer: {
+    position: 'relative',
+    marginRight: 16,
   },
   profileImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    marginRight: 16,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 3,
+    borderColor: Colors.light.tint,
+  },
+  statusDot: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#4CD964',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   profileInfo: {
     flex: 1,
   },
   username: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 10,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    marginTop: 5,
+  },
+  statCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  statIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#888',
   },
   walletContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   walletBalance: {
+    marginLeft: 4,
     fontSize: 16,
     fontWeight: '600',
     color: Colors.light.tint,
-    marginLeft: 4,
   },
   tabsContainer: {
     flexDirection: 'row',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: '#fff',
   },
   tab: {
     flex: 1,
-    paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    position: 'relative',
   },
   activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: Colors.light.tint,
+    backgroundColor: 'transparent',
+  },
+  activeTabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    height: 3,
+    width: '30%',
+    backgroundColor: Colors.light.tint,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    color: '#888',
   },
   activeTabText: {
+    fontWeight: '600',
     color: Colors.light.tint,
   },
   listContent: {
-    padding: 16,
-    paddingBottom: 32,
+    padding: 12,
+    paddingBottom: 50,
   },
   betCard: {
+    backgroundColor: '#fff',
     borderRadius: 16,
-    marginBottom: 16,
-    overflow: 'hidden',
-    elevation: 2,
+    marginBottom: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  wonBetCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CD964',
+  },
+  lostBetCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF3B30',
+  },
+  pendingBetCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#FFCC00',
   },
   betCardContent: {
     padding: 16,
   },
-  wonBetCard: {
-    backgroundColor: 'rgba(76, 175, 80, 0.1)',
-    borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
-  },
-  lostBetCard: {
-    backgroundColor: 'rgba(244, 67, 54, 0.1)',
-    borderLeftWidth: 4,
-    borderLeftColor: '#F44336',
-  },
-  pendingBetCard: {
-    backgroundColor: 'rgba(33, 150, 243, 0.1)',
-    borderLeftWidth: 4,
-    borderLeftColor: '#2196F3',
-  },
   betHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     marginBottom: 12,
   },
   betInfo: {
     flex: 1,
-    marginRight: 8,
   },
   betAmount: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     marginBottom: 4,
   },
   betOption: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#555',
   },
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
-    backgroundColor: '#888',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   wonBadge: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(76, 217, 100, 0.15)',
   },
   lostBadge: {
-    backgroundColor: '#F44336',
+    backgroundColor: 'rgba(255, 59, 48, 0.15)',
   },
   pendingBadge: {
-    backgroundColor: '#2196F3',
+    backgroundColor: 'rgba(255, 204, 0, 0.15)',
   },
   openBadge: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(90, 200, 250, 0.15)',
   },
   lockedBadge: {
-    backgroundColor: '#FF9800',
+    backgroundColor: 'rgba(88, 86, 214, 0.15)',
   },
   settledBadge: {
-    backgroundColor: '#9C27B0',
+    backgroundColor: 'rgba(76, 217, 100, 0.15)',
   },
   statusText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '600',
+    fontSize: 12,
   },
   betDetails: {
     marginBottom: 12,
@@ -560,12 +651,11 @@ const styles = StyleSheet.create({
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 8,
   },
   detailText: {
-    fontSize: 14,
-    color: '#555',
-    marginLeft: 6,
+    marginLeft: 8,
+    color: '#666',
   },
   winningsText: {
     color: Colors.light.tint,
@@ -574,11 +664,13 @@ const styles = StyleSheet.create({
   viewMoreContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginTop: 8,
+    justifyContent: 'center',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.05)',
+    marginTop: 12,
+    paddingTop: 12,
   },
   viewMoreText: {
-    fontSize: 12,
     color: '#888',
     marginRight: 4,
   },
@@ -586,21 +678,21 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
-    marginTop: 100,
+    padding: 40,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
     marginTop: 16,
+    color: '#555',
   },
   emptySubtext: {
     fontSize: 14,
     color: '#888',
-    textAlign: 'center',
     marginTop: 8,
+    textAlign: 'center',
   },
-  modalBackdrop: {
+  modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
@@ -610,77 +702,67 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     height: '80%',
-    width: '100%',
-    overflow: 'hidden',
-  },
-  dragIndicator: {
-    width: 40,
-    height: 5,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 2.5,
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 5,
+    paddingTop: 20,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
   },
   closeButton: {
-    padding: 8,
+    padding: 4,
   },
   detailsScrollContainer: {
     flex: 1,
   },
   betDetailsContainer: {
     padding: 16,
-    paddingBottom: 40,
   },
   betDescriptionTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   betDetailSection: {
     marginBottom: 24,
   },
   detailSectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: 12,
     color: Colors.light.tint,
   },
   detailCard: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: 'rgba(0,0,0,0.02)',
     borderRadius: 12,
     padding: 16,
   },
   detailLabel: {
-    fontSize: 14,
-    color: '#555',
     width: 120,
+    fontSize: 14,
+    color: '#666',
   },
   detailValue: {
-    fontSize: 14,
-    fontWeight: '500',
     flex: 1,
+    fontSize: 15,
+    fontWeight: '500',
   },
   optionCard: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: 'rgba(0,0,0,0.02)',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   selectedOptionCard: {
-    backgroundColor: `${Colors.light.tint}15`,
+    backgroundColor: 'rgba(52, 152, 219, 0.08)',
     borderLeftWidth: 4,
     borderLeftColor: Colors.light.tint,
   },
@@ -694,16 +776,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   optionDetail: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
   },
   optionDetailLabel: {
-    fontSize: 12,
-    color: '#555',
-    marginRight: 4,
+    fontSize: 13,
+    color: '#888',
   },
   optionDetailValue: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
   },
 });

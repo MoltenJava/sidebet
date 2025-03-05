@@ -14,7 +14,8 @@ import {
   FlatList,
   Image,
   ActivityIndicator,
-  Dimensions
+  Dimensions,
+  Switch
 } from 'react-native';
 import { ThemedText } from './ThemedText';
 import { ThemedView } from './ThemedView';
@@ -31,9 +32,19 @@ interface CreateBetFormProps {
   onCancel: () => void;
 }
 
+// Added new bet type enum for different betting formats
+type BetType = 'yesno' | 'overunder' | 'multiple' | 'custom';
+
+// Enhanced bet option interface to support different bet types
 interface BetOption {
   option: string;
   initial_odds: number;
+}
+
+// New interface for non-monetary wagers
+interface NonMonetaryWager {
+  type: string;
+  description: string;
 }
 
 export const CreateBetForm: React.FC<CreateBetFormProps> = ({ 
@@ -44,6 +55,7 @@ export const CreateBetForm: React.FC<CreateBetFormProps> = ({
   // Debug log
   console.debug('[CreateBetForm] Rendering form for user:', userId);
 
+  // Core bet information
   const [description, setDescription] = useState('');
   const [options, setOptions] = useState<BetOption[]>([
     { option: '', initial_odds: 2.0 },
@@ -58,7 +70,16 @@ export const CreateBetForm: React.FC<CreateBetFormProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  // New state variables for creator's initial bet
+  // New state variables for bet types and non-monetary wagers
+  const [betType, setBetType] = useState<BetType>('multiple');
+  const [lineValue, setLineValue] = useState('');
+  const [useNonMonetaryWager, setUseNonMonetaryWager] = useState(false);
+  const [nonMonetaryWager, setNonMonetaryWager] = useState<NonMonetaryWager>({
+    type: 'drinks',
+    description: '1 round of drinks'
+  });
+  
+  // Creator's initial bet
   const [selectedOptionIndex, setSelectedOptionIndex] = useState<number | null>(null);
   const [initialBetAmount, setInitialBetAmount] = useState('');
   const [userBalance, setUserBalance] = useState(0);
@@ -69,6 +90,72 @@ export const CreateBetForm: React.FC<CreateBetFormProps> = ({
     fetchFriends();
     fetchUserBalance();
   }, [userId]);
+
+  // Effect for auto-detecting bet type based on description
+  useEffect(() => {
+    // Only try to auto-detect if the user hasn't manually selected a type
+    if (description && !description.includes('?')) {
+      console.debug('[CreateBetForm] Attempting to auto-detect bet type from description');
+      
+      // Check for common over/under patterns
+      if (
+        /will.*(score|make|get|have|reach).*(more|less|over|under|above|below).*than/i.test(description) ||
+        /over\/under/i.test(description) ||
+        /\b[0-9]+(\.[0-9]+)?\b.*\b(over|under)\b/i.test(description)
+      ) {
+        console.debug('[CreateBetForm] Auto-detected Over/Under type bet');
+        setBetType('overunder');
+        
+        // Try to extract the line value if possible
+        const matches = description.match(/\b[0-9]+(\.[0-9]+)?\b/);
+        if (matches && matches[0] && !lineValue) {
+          setLineValue(matches[0]);
+        }
+      } 
+      // Check for common yes/no patterns
+      else if (
+        /will.*\?$/i.test(description) || 
+        /\b(yes|no)\b/i.test(description) ||
+        /\bor not\b/i.test(description)
+      ) {
+        console.debug('[CreateBetForm] Auto-detected Yes/No type bet');
+        setBetType('yesno');
+      }
+    }
+  }, [description]);
+
+  // Update options based on bet type changes
+  useEffect(() => {
+    console.debug(`[CreateBetForm] Bet type changed to: ${betType}`);
+    
+    if (betType === 'yesno') {
+      setOptions([
+        { option: 'Yes', initial_odds: 2.0 },
+        { option: 'No', initial_odds: 2.0 }
+      ]);
+    } else if (betType === 'overunder') {
+      setOptions([
+        { option: `Over ${lineValue || '...'}`, initial_odds: 2.0 },
+        { option: `Under ${lineValue || '...'}`, initial_odds: 2.0 }
+      ]);
+    } else if (options.length < 2) {
+      // Ensure we always have at least 2 options for multiple choice
+      setOptions([
+        ...options,
+        { option: '', initial_odds: 2.0 }
+      ]);
+    }
+  }, [betType, lineValue]);
+
+  // Update over/under options when line value changes
+  useEffect(() => {
+    if (betType === 'overunder' && lineValue) {
+      setOptions([
+        { option: `Over ${lineValue}`, initial_odds: 2.0 },
+        { option: `Under ${lineValue}`, initial_odds: 2.0 }
+      ]);
+    }
+  }, [lineValue]);
 
   const fetchFriends = async () => {
     try {
@@ -102,195 +189,319 @@ export const CreateBetForm: React.FC<CreateBetFormProps> = ({
       // Fallback to direct API call
       const response = await fetch(`https://sidebet-api.onrender.com/api/users/${userId}/balance`);
       const data = await response.json();
+      
       if (data.success) {
         setUserBalance(data.balance);
       } else {
-        // If API call fails, set a default balance for demo purposes
-        console.debug('[CreateBetForm] Using default balance');
-        setUserBalance(1000);
+        console.error('[CreateBetForm] Failed to fetch balance:', data.message);
       }
     } catch (error) {
-      console.error('[CreateBetForm] Error fetching user balance:', error);
-      // Set a default balance for demo purposes
-      setUserBalance(1000);
+      console.error('[CreateBetForm] Error fetching balance:', error);
     } finally {
       setIsLoadingBalance(false);
     }
   };
 
   const handleAddOption = () => {
-    console.debug('[CreateBetForm] Adding new bet option');
+    console.debug('[CreateBetForm] Adding new option');
     setOptions([...options, { option: '', initial_odds: 2.0 }]);
   };
-
+  
   const handleRemoveOption = (index: number) => {
-    if (options.length <= 2) {
-      Alert.alert('Error', 'A bet must have at least 2 options');
+    console.debug(`[CreateBetForm] Removing option at index ${index}`);
+    
+    // Don't allow removing if we have less than 2 options for multiple choice
+    // or exactly 2 options for yes/no and over/under
+    if ((betType === 'multiple' && options.length <= 2) || 
+        ((betType === 'yesno' || betType === 'overunder') && options.length <= 2)) {
+      Alert.alert('Cannot Remove', 'You need at least 2 options for this bet type.');
       return;
     }
     
-    console.debug(`[CreateBetForm] Removing bet option at index: ${index}`);
     const newOptions = [...options];
     newOptions.splice(index, 1);
     setOptions(newOptions);
+    
+    // If we removed the selected option, clear the selection
+    if (selectedOptionIndex === index) {
+      setSelectedOptionIndex(null);
+    } else if (selectedOptionIndex !== null && selectedOptionIndex > index) {
+      // Adjust the selected index if we removed an option before it
+      setSelectedOptionIndex(selectedOptionIndex - 1);
+    }
   };
-
+  
   const handleOptionChange = (text: string, index: number) => {
+    console.debug(`[CreateBetForm] Changing option at index ${index} to: ${text}`);
     const newOptions = [...options];
     newOptions[index].option = text;
     setOptions(newOptions);
   };
-
+  
+  const handleLineValueChange = (text: string) => {
+    console.debug(`[CreateBetForm] Changing line value to: ${text}`);
+    // Only allow numbers and a single decimal point
+    if (/^[0-9]*\.?[0-9]*$/.test(text)) {
+      setLineValue(text);
+    }
+  };
+  
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(false);
     if (selectedDate) {
-      console.debug(`[CreateBetForm] Selected closing date: ${selectedDate.toISOString()}`);
+      console.debug(`[CreateBetForm] Setting closing date to: ${selectedDate.toISOString()}`);
       setClosingDate(selectedDate);
     }
   };
-
+  
   const handleVisibilityChange = (newVisibility: 'public' | 'friends_only' | 'challenge') => {
-    console.debug(`[CreateBetForm] Changed visibility to: ${newVisibility}`);
+    console.debug(`[CreateBetForm] Changing visibility to: ${newVisibility}`);
     setVisibility(newVisibility);
-    if (newVisibility === 'challenge' && selectedFriends.length === 0) {
-      setSelectedFriends([]);
+    
+    // When changing to challenge, preselect the first friend
+    if (newVisibility === 'challenge' && friends.length > 0 && selectedFriends.length === 0) {
+      setSelectedFriends([friends[0].user_id]);
+    }
+    
+    // Reset non-monetary wager if not in challenge mode
+    if (newVisibility !== 'challenge') {
+      setUseNonMonetaryWager(false);
     }
   };
-
+  
   const handleToggleFriend = (friendId: string) => {
     console.debug(`[CreateBetForm] Toggling friend: ${friendId}`);
+    // For challenge, we can only select one friend
+    if (visibility === 'challenge') {
+      setSelectedFriends([friendId]);
+      return;
+    }
+    
+    // For friends_only, we can select multiple
     if (selectedFriends.includes(friendId)) {
       setSelectedFriends(selectedFriends.filter(id => id !== friendId));
     } else {
       setSelectedFriends([...selectedFriends, friendId]);
     }
   };
-
+  
   const handleSelectOption = (index: number) => {
-    console.debug(`[CreateBetForm] Selected option index: ${index}`);
+    console.debug(`[CreateBetForm] Selecting option at index ${index}`);
     setSelectedOptionIndex(index);
   };
   
   const handleInitialBetAmountChange = (text: string) => {
-    // Only allow numeric input with up to 2 decimal places
-    if (/^\d*\.?\d{0,2}$/.test(text)) {
-      console.debug(`[CreateBetForm] Initial bet amount changed: ${text}`);
+    console.debug(`[CreateBetForm] Setting initial bet amount to: ${text}`);
+    // Ensure the amount is a valid number
+    if (/^[0-9]*\.?[0-9]*$/.test(text)) {
       setInitialBetAmount(text);
     }
   };
+  
+  const handleNonMonetaryTypeChange = (text: string) => {
+    setNonMonetaryWager({
+      ...nonMonetaryWager,
+      type: text
+    });
+  };
+  
+  const handleNonMonetaryDescriptionChange = (text: string) => {
+    setNonMonetaryWager({
+      ...nonMonetaryWager,
+      description: text
+    });
+  };
+  
+  const handleToggleBetType = (type: BetType) => {
+    console.debug(`[CreateBetForm] Switching bet type to: ${type}`);
+    setBetType(type);
+  };
+  
+  const validateForm = (): boolean => {
+    // Validate description
+    if (!description.trim()) {
+      setError('Please provide a description for your bet');
+      return false;
+    }
+    
+    // Validate options based on bet type
+    if (betType === 'overunder' && !lineValue) {
+      setError('Please set a line value for Over/Under');
+      return false;
+    }
+    
+    // Validate that all options have text
+    for (let i = 0; i < options.length; i++) {
+      if (!options[i].option.trim()) {
+        setError(`Please fill in all bet options`);
+        return false;
+      }
+    }
+    
+    // Validate minimum wager
+    if (!minimumWager.trim() || isNaN(parseFloat(minimumWager)) || parseFloat(minimumWager) <= 0) {
+      setError('Please set a valid minimum wager amount');
+      return false;
+    }
+    
+    // Validate friends selection for friends_only visibility
+    if (visibility === 'friends_only' && selectedFriends.length === 0) {
+      setError('Please select at least one friend');
+      return false;
+    }
+    
+    // Validate friends selection for challenge visibility
+    if (visibility === 'challenge' && selectedFriends.length !== 1) {
+      setError('Please select exactly one friend to challenge');
+      return false;
+    }
+    
+    // Validate non-monetary wager for challenge bets
+    if (visibility === 'challenge' && useNonMonetaryWager) {
+      if (!nonMonetaryWager.type.trim() || !nonMonetaryWager.description.trim()) {
+        setError('Please provide details for your non-monetary wager');
+        return false;
+      }
+    }
+    
+    // Validate initial bet
+    if (selectedOptionIndex === null) {
+      setError('Please select your initial bet option');
+      return false;
+    }
+    
+    // Validate initial bet amount
+    if (!useNonMonetaryWager) {
+      if (!initialBetAmount.trim() || isNaN(parseFloat(initialBetAmount)) || parseFloat(initialBetAmount) <= 0) {
+        setError('Please set a valid initial bet amount');
+        return false;
+      }
+      
+      // Check if user has enough balance
+      if (parseFloat(initialBetAmount) > userBalance) {
+        setError('You don\'t have enough balance for this bet');
+        return false;
+      }
+    }
+    
+    return true;
+  };
 
   const handleCreateBet = async () => {
+    // Validate the form
+    if (!validateForm()) {
+      return;
+    }
+    
+    // Debug log
+    console.debug('[CreateBetForm] Creating new bet');
+    setLoading(true);
+    setError('');
+    
     try {
-      // Validate inputs
-      if (!description.trim()) {
-        setError('Please enter a description');
-        return;
-      }
-      
-      if (options.some(opt => !opt.option.trim())) {
-        setError('Please fill in all options');
-        return;
-      }
-      
-      if (selectedOptionIndex === null) {
-        setError('Please select an option to bet on');
-        return;
-      }
-      
-      if (!initialBetAmount || parseFloat(initialBetAmount) <= 0) {
-        setError('Please enter a valid bet amount');
-        return;
-      }
-      
-      if (parseFloat(initialBetAmount) > userBalance) {
-        setError('Insufficient balance for this bet');
-        return;
-      }
-      
-      if (minimumWager && (isNaN(parseFloat(minimumWager)) || parseFloat(minimumWager) <= 0)) {
-        setError('Please enter a valid minimum wager');
-        return;
-      }
-      
-      if (visibility === 'challenge' && selectedFriends.length === 0) {
-        setError('Please select at least one friend to challenge');
-        return;
-      }
-      
-      setLoading(true);
-      setError('');
-      
-      // Format options for API
-      const formattedOptions: Record<string, { option: string; initial_odds: number }> = {};
-      options.forEach((opt, index) => {
-        formattedOptions[`option_${index + 1}`] = {
-          option: opt.option,
-          initial_odds: opt.initial_odds
+      // Prepare bet options
+      const betOptions: Record<string, { option: string, initial_odds: number }> = {};
+      options.forEach((option, index) => {
+        betOptions[`option${index + 1}`] = {
+          option: option.option,
+          initial_odds: option.initial_odds
         };
       });
       
-      // Create bet payload
-      const betPayload = {
+      // Calculate closing date (ensure it's in the future)
+      const now = new Date();
+      const adjustedClosingDate = closingDate < now ? new Date(now.getTime() + 60 * 60 * 1000) : closingDate;
+      
+      // Prepare bet data
+      const betData = {
         creator_id: userId,
         event_description: description,
-        bet_options: formattedOptions,
-        bet_closing_time: closingDate.toISOString(),
-        minimum_wager: minimumWager ? parseFloat(minimumWager) : 0,
-        visibility,
-        challenged_users: visibility === 'challenge' ? selectedFriends : [],
-        creator_bet: {
-          option_key: `option_${selectedOptionIndex + 1}`,
-          amount: parseFloat(initialBetAmount)
-        }
+        bet_options: betOptions,
+        bet_closing_time: adjustedClosingDate.toISOString(),
+        minimum_wager: parseFloat(minimumWager),
+        visibility: visibility,
+        invited_friends: selectedFriends,
+        bet_type: betType,
+        is_non_monetary: useNonMonetaryWager && visibility === 'challenge',
+        non_monetary_wager: useNonMonetaryWager && visibility === 'challenge' ? nonMonetaryWager : null,
+        line_value: betType === 'overunder' ? parseFloat(lineValue) : null
       };
       
-      console.debug('[CreateBetForm] Creating bet with payload:', betPayload);
+      console.debug('[CreateBetForm] Sending bet data:', JSON.stringify(betData));
       
-      // Send request to create bet
-      const response = await fetch('https://sidebet-api.onrender.com/api/bets', {
+      // Create the bet - use a mock response for now since ApiService is not properly implemented
+      // const newBet = await ApiService.createBet(betData);
+      // Use direct API call instead of ApiService to avoid argument errors
+      const createResponse = await fetch('https://sidebet-api.onrender.com/api/bets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(betPayload),
+        body: JSON.stringify(betData),
       });
       
-      const data = await response.json();
+      const newBet = await createResponse.json();
       
-      if (data.success) {
-        console.debug('[CreateBetForm] Bet created successfully:', data.bet);
-        onBetCreated();
-      } else {
-        setError(data.message || 'Failed to create bet');
+      // Place initial bet
+      if (selectedOptionIndex !== null) {
+        // Prepare the selected option key
+        const selectedOptionKey = `option${selectedOptionIndex + 1}`;
+        
+        // Place the bet
+        const placeBetData = {
+          user_id: userId,
+          bet_id: newBet.bet_id,
+          selected_option: selectedOptionKey,
+          amount: useNonMonetaryWager ? 0 : parseFloat(initialBetAmount),
+          is_non_monetary: useNonMonetaryWager && visibility === 'challenge',
+          non_monetary_wager: useNonMonetaryWager && visibility === 'challenge' ? nonMonetaryWager : null
+        };
+        
+        console.debug('[CreateBetForm] Placing initial bet:', JSON.stringify(placeBetData));
+        // Use direct API call instead of ApiService to avoid argument errors
+        await fetch('https://sidebet-api.onrender.com/api/bets/place', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(placeBetData),
+        });
       }
+      
+      // Success
+      console.debug('[CreateBetForm] Bet created successfully');
+      Alert.alert('Success', 'Your bet has been created!');
+      onBetCreated();
     } catch (error) {
       console.error('[CreateBetForm] Error creating bet:', error);
-      setError('An error occurred. Please try again.');
+      setError('Failed to create bet. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const renderFriendItem = ({ item }: { item: User }) => (
-    <TouchableOpacity
+    <TouchableOpacity 
       style={[
         styles.friendItem,
-        selectedFriends.includes(item.user_id) && styles.selectedFriendItem
+        selectedFriends.includes(item.user_id) && styles.selectedFriendItem,
+        { width: visibility === 'challenge' ? 120 : '48%' }
       ]}
       onPress={() => handleToggleFriend(item.user_id)}
     >
-      <View style={styles.friendInfo}>
-        <Image
-          source={{ uri: item.profile_image || `https://i.pravatar.cc/150?u=${item.user_id}` }}
-          style={styles.friendAvatar}
-        />
-        <ThemedText style={styles.friendName}>{item.username}</ThemedText>
-      </View>
-      <View style={styles.checkboxContainer}>
-        {selectedFriends.includes(item.user_id) && (
-          <Ionicons name="checkmark-circle" size={24} color={Colors.light.tint} />
-        )}
-      </View>
+      <Image 
+        source={{ uri: item.profile_image || `https://i.pravatar.cc/150?u=${item.user_id}` }} 
+        style={styles.friendAvatar} 
+      />
+      <ThemedText 
+        style={styles.friendName}
+        numberOfLines={1}
+      >
+        {item.username}
+      </ThemedText>
+      {selectedFriends.includes(item.user_id) && (
+        <Ionicons name="checkmark-circle" size={20} color={Colors.light.tint} />
+      )}
     </TouchableOpacity>
   );
 
@@ -298,268 +509,407 @@ export const CreateBetForm: React.FC<CreateBetFormProps> = ({
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
     >
       <ScrollView 
-        style={styles.scrollContainer}
-        contentContainerStyle={styles.scrollContentContainer}
-        showsVerticalScrollIndicator={true}
-        bounces={true}
-        alwaysBounceVertical={true}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.formContainer}>
-          <View style={styles.dragIndicator} />
-          
-          <LinearGradient
-            colors={['#2a2a2a', '#1a1a1a']}
-            style={styles.headerGradient}
-          >
-            <ThemedText style={styles.title}>Create a Bet</ThemedText>
-            
-            {error ? (
-              <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle" size={20} color="#ff4d4d" />
-                <ThemedText style={styles.errorText}>{error}</ThemedText>
-              </View>
-            ) : null}
-            
-            <View style={styles.balanceContainer}>
-              {isLoadingBalance ? (
-                <ActivityIndicator size="small" color={Colors.light.tint} />
+        <ThemedView style={styles.formContainer}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
+              <Ionicons name="close" size={24} color="#888" />
+            </TouchableOpacity>
+            <ThemedText style={styles.headerTitle}>Create a Bet</ThemedText>
+            <TouchableOpacity 
+              style={[
+                styles.createButton,
+                loading ? styles.disabledButton : null
+              ]}
+              onPress={handleCreateBet}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <View style={styles.balanceContent}>
-                  <Ionicons name="wallet-outline" size={18} color="#fff" />
-                  <ThemedText style={styles.balanceText}>
-                    Balance: ${userBalance.toFixed(2)}
-                  </ThemedText>
-                </View>
+                <ThemedText style={styles.createButtonText}>Create</ThemedText>
               )}
-            </View>
-          </LinearGradient>
-          
-          <View style={styles.formContent}>
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>What's the bet?</ThemedText>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g., Will it rain tomorrow?"
-                placeholderTextColor="#666"
-                value={description}
-                onChangeText={setDescription}
-                multiline
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Options</ThemedText>
-              {options.map((option, index) => (
-                <View key={index} style={styles.optionContainer}>
-                  <View style={styles.optionInputContainer}>
-                    <TextInput
-                      style={styles.optionInput}
-                      placeholder={`Option ${index + 1}`}
-                      placeholderTextColor="#666"
-                      value={option.option}
-                      onChangeText={(text) => handleOptionChange(text, index)}
-                    />
-                    {index > 1 && (
-                      <TouchableOpacity
-                        style={styles.removeButton}
-                        onPress={() => handleRemoveOption(index)}
-                      >
-                        <Ionicons name="close-circle" size={24} color="#ff4d4d" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  
-                  <TouchableOpacity 
-                    style={[
-                      styles.optionSelectButton,
-                      selectedOptionIndex === index ? styles.selectedOption : {}
-                    ]}
-                    onPress={() => handleSelectOption(index)}
-                  >
-                    <ThemedText style={styles.optionSelectText}>
-                      {selectedOptionIndex === index ? 'Selected' : 'Select'}
-                    </ThemedText>
-                  </TouchableOpacity>
-                </View>
-              ))}
-              
-              {options.length < 5 && (
-                <TouchableOpacity style={styles.addButton} onPress={handleAddOption}>
-                  <Ionicons name="add-circle-outline" size={20} color="#fff" />
-                  <ThemedText style={styles.addButtonText}>Add Option</ThemedText>
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Your Initial Bet</ThemedText>
-              
-              <View style={styles.betAmountContainer}>
-                <TextInput
-                  style={styles.betAmountInput}
-                  placeholder="Enter amount"
-                  placeholderTextColor="#666"
-                  value={initialBetAmount}
-                  onChangeText={handleInitialBetAmountChange}
-                  keyboardType="decimal-pad"
-                />
-                <View style={styles.currencyContainer}>
-                  <ThemedText style={styles.currencyText}>$</ThemedText>
-                </View>
-              </View>
-              
-              {selectedOptionIndex !== null && (
-                <View style={styles.selectedBetContainer}>
-                  <ThemedText style={styles.selectedBetText}>
-                    You're betting on: {options[selectedOptionIndex]?.option || 'Select an option'}
-                  </ThemedText>
-                </View>
-              )}
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Closing Date</ThemedText>
-              <TouchableOpacity
-                style={styles.datePickerButton}
-                onPress={() => setShowDatePicker(true)}
+            </TouchableOpacity>
+          </View>
+
+          {/* Balance indicator */}
+          <ThemedView style={styles.balanceContainer}>
+            {isLoadingBalance ? (
+              <ActivityIndicator size="small" color={Colors.light.tint} />
+            ) : (
+              <>
+                <Ionicons name="wallet-outline" size={18} color={Colors.light.tint} />
+                <ThemedText style={styles.balanceText}>
+                  Your Balance: ${userBalance.toFixed(2)}
+                </ThemedText>
+              </>
+            )}
+          </ThemedView>
+
+          {/* Bet Type Selector */}
+          <ThemedView style={styles.sectionContainer}>
+            <ThemedText style={styles.sectionTitle}>Bet Type</ThemedText>
+            <View style={styles.betTypeContainer}>
+              <TouchableOpacity 
+                style={[styles.betTypeButton, betType === 'yesno' && styles.activeBetTypeButton]}
+                onPress={() => handleToggleBetType('yesno')}
               >
-                <Ionicons name="calendar-outline" size={20} color="#fff" />
-                <ThemedText style={styles.dateText}>
-                  {closingDate.toLocaleDateString()} at {closingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <Ionicons 
+                  name="checkmark-circle-outline" 
+                  size={20} 
+                  color={betType === 'yesno' ? Colors.light.tint : '#888'} 
+                />
+                <ThemedText style={[
+                  styles.betTypeText, 
+                  betType === 'yesno' && styles.activeBetTypeText
+                ]}>
+                  Yes/No
                 </ThemedText>
               </TouchableOpacity>
               
-              {showDatePicker && (
-                <DateTimePicker
-                  value={closingDate}
-                  mode="datetime"
-                  display="default"
-                  onChange={handleDateChange}
-                  minimumDate={new Date()}
+              <TouchableOpacity 
+                style={[styles.betTypeButton, betType === 'overunder' && styles.activeBetTypeButton]}
+                onPress={() => handleToggleBetType('overunder')}
+              >
+                <Ionicons 
+                  name="swap-vertical-outline" 
+                  size={20} 
+                  color={betType === 'overunder' ? Colors.light.tint : '#888'} 
                 />
-              )}
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Minimum Wager (Optional)</ThemedText>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter minimum amount"
-                placeholderTextColor="#666"
-                value={minimumWager}
-                onChangeText={setMinimumWager}
-                keyboardType="decimal-pad"
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Visibility</ThemedText>
-              <View style={styles.visibilityContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.visibilityOption,
-                    visibility === 'public' ? styles.selectedVisibility : {},
-                  ]}
-                  onPress={() => handleVisibilityChange('public')}
-                >
-                  <Ionicons
-                    name="globe-outline"
-                    size={20}
-                    color={visibility === 'public' ? '#fff' : '#888'}
-                  />
-                  <ThemedText
-                    style={[
-                      styles.visibilityText,
-                      visibility === 'public' ? styles.selectedVisibilityText : {},
-                    ]}
-                  >
-                    Public
-                  </ThemedText>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[
-                    styles.visibilityOption,
-                    visibility === 'friends_only' ? styles.selectedVisibility : {},
-                  ]}
-                  onPress={() => handleVisibilityChange('friends_only')}
-                >
-                  <Ionicons
-                    name="people-outline"
-                    size={20}
-                    color={visibility === 'friends_only' ? '#fff' : '#888'}
-                  />
-                  <ThemedText
-                    style={[
-                      styles.visibilityText,
-                      visibility === 'friends_only' ? styles.selectedVisibilityText : {},
-                    ]}
-                  >
-                    Friends
-                  </ThemedText>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[
-                    styles.visibilityOption,
-                    visibility === 'challenge' ? styles.selectedVisibility : {},
-                  ]}
-                  onPress={() => handleVisibilityChange('challenge')}
-                >
-                  <Ionicons
-                    name="flame-outline"
-                    size={20}
-                    color={visibility === 'challenge' ? '#fff' : '#888'}
-                  />
-                  <ThemedText
-                    style={[
-                      styles.visibilityText,
-                      visibility === 'challenge' ? styles.selectedVisibilityText : {},
-                    ]}
-                  >
-                    Challenge
-                  </ThemedText>
-                </TouchableOpacity>
-              </View>
-            </View>
-            
-            {visibility === 'challenge' && (
-              <View style={styles.inputGroup}>
-                <ThemedText style={styles.label}>Select Friends to Challenge</ThemedText>
-                <FlatList
-                  data={friends}
-                  keyExtractor={(item) => item.user_id}
-                  renderItem={renderFriendItem}
-                  style={styles.friendsList}
-                  ListEmptyComponent={
-                    <ThemedText style={styles.emptyText}>No friends found</ThemedText>
-                  }
-                />
-              </View>
-            )}
-            
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
-                <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
+                <ThemedText style={[
+                  styles.betTypeText, 
+                  betType === 'overunder' && styles.activeBetTypeText
+                ]}>
+                  Over/Under
+                </ThemedText>
               </TouchableOpacity>
               
-              <TouchableOpacity
-                style={[styles.createButton, loading ? styles.disabledButton : {}]}
-                onPress={handleCreateBet}
-                disabled={loading}
+              <TouchableOpacity 
+                style={[styles.betTypeButton, betType === 'multiple' && styles.activeBetTypeButton]}
+                onPress={() => handleToggleBetType('multiple')}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <ThemedText style={styles.createButtonText}>Create Bet</ThemedText>
-                )}
+                <Ionicons 
+                  name="list-outline" 
+                  size={20} 
+                  color={betType === 'multiple' ? Colors.light.tint : '#888'} 
+                />
+                <ThemedText style={[
+                  styles.betTypeText, 
+                  betType === 'multiple' && styles.activeBetTypeText
+                ]}>
+                  Multiple Choice
+                </ThemedText>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </ThemedView>
+
+          {/* Description input */}
+          <ThemedView style={styles.inputContainer}>
+            <ThemedText style={styles.inputLabel}>What are you betting on?</ThemedText>
+            <TextInput
+              style={styles.textInput}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="e.g. Will the Lakers win tonight?"
+              placeholderTextColor="#888"
+              multiline
+            />
+          </ThemedView>
+          
+          {/* Line Value input - only for over/under */}
+          {betType === 'overunder' && (
+            <ThemedView style={styles.inputContainer}>
+              <ThemedText style={styles.inputLabel}>Line Value</ThemedText>
+              <View style={styles.lineValueContainer}>
+                <TextInput
+                  style={styles.lineValueInput}
+                  value={lineValue}
+                  onChangeText={handleLineValueChange}
+                  placeholder="e.g. 100"
+                  placeholderTextColor="#888"
+                  keyboardType="numeric"
+                />
+                <ThemedText style={styles.lineValueHelper}>
+                  This is the number that bettors will wager over or under
+                </ThemedText>
+              </View>
+            </ThemedView>
+          )}
+
+          {/* Bet options */}
+          <ThemedView style={styles.sectionContainer}>
+            <ThemedText style={styles.sectionTitle}>Bet Options</ThemedText>
+            <ThemedText style={styles.sectionSubtitle}>
+              {betType === 'yesno' 
+                ? 'Simple Yes or No options for your bet'
+                : betType === 'overunder'
+                ? 'Over or Under the line value'
+                : 'Add multiple options for your bet'
+              }
+            </ThemedText>
+            
+            {options.map((option, index) => (
+              <View key={index} style={styles.optionContainer}>
+                <View style={styles.optionInputContainer}>
+                  <TextInput
+                    style={[
+                      styles.optionInput,
+                      (betType === 'yesno' || betType === 'overunder') && styles.disabledOptionInput
+                    ]}
+                    value={option.option}
+                    onChangeText={(text) => handleOptionChange(text, index)}
+                    placeholder={`Option ${index + 1}`}
+                    placeholderTextColor="#888"
+                    editable={betType === 'multiple'}
+                  />
+                  
+                  {betType === 'multiple' && (
+                    <TouchableOpacity 
+                      style={styles.removeOptionButton}
+                      onPress={() => handleRemoveOption(index)}
+                      disabled={options.length <= 2}
+                    >
+                      <Ionicons name="close-circle" size={20} color={options.length <= 2 ? '#ccc' : '#ff4d4d'} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                
+                <TouchableOpacity
+                  style={[
+                    styles.optionSelector,
+                    selectedOptionIndex === index && styles.selectedOptionSelector
+                  ]}
+                  onPress={() => handleSelectOption(index)}
+                >
+                  <Ionicons 
+                    name={selectedOptionIndex === index ? "checkmark-circle" : "radio-button-off"} 
+                    size={24} 
+                    color={selectedOptionIndex === index ? Colors.light.tint : '#888'} 
+                  />
+                  <ThemedText style={[
+                    styles.optionSelectorText,
+                    selectedOptionIndex === index && styles.selectedOptionText
+                  ]}>
+                    My Pick
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+            ))}
+            
+            {betType === 'multiple' && (
+              <TouchableOpacity 
+                style={styles.addOptionButton}
+                onPress={handleAddOption}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={Colors.light.tint} />
+                <ThemedText style={styles.addOptionText}>Add another option</ThemedText>
+              </TouchableOpacity>
+            )}
+          </ThemedView>
+
+          {/* Bet parameters */}
+          <ThemedView style={styles.sectionContainer}>
+            <ThemedText style={styles.sectionTitle}>Bet Parameters</ThemedText>
+            
+            {/* Minimum wager input */}
+            <View style={styles.inputContainer}>
+              <ThemedText style={styles.inputLabel}>Minimum Wager</ThemedText>
+              <View style={styles.wagerInputContainer}>
+                <ThemedText style={styles.currencySymbol}>$</ThemedText>
+                <TextInput
+                  style={styles.wagerInput}
+                  value={minimumWager}
+                  onChangeText={setMinimumWager}
+                  placeholder="5.00"
+                  placeholderTextColor="#888"
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+            
+            {/* Date picker */}
+            <View style={styles.inputContainer}>
+              <ThemedText style={styles.inputLabel}>Closing Date</ThemedText>
+              <TouchableOpacity 
+                style={styles.datePickerButton}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Ionicons name="calendar-outline" size={20} color="#888" />
+                <ThemedText style={styles.dateText}>
+                  {closingDate.toLocaleString()}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+            
+            {showDatePicker && (
+              <DateTimePicker
+                value={closingDate}
+                mode="datetime"
+                display="default"
+                onChange={handleDateChange}
+                minimumDate={new Date()}
+              />
+            )}
+          </ThemedView>
+          
+          {/* Initial bet amount */}
+          <ThemedView style={styles.sectionContainer}>
+            <ThemedText style={styles.sectionTitle}>Your Initial Bet</ThemedText>
+            {selectedOptionIndex !== null ? (
+              <ThemedText style={styles.selectedOptionText}>
+                Your pick: {options[selectedOptionIndex].option || `Option ${selectedOptionIndex + 1}`}
+              </ThemedText>
+            ) : (
+              <ThemedText style={styles.helperText}>
+                Select one of the options above to place your initial bet
+              </ThemedText>
+            )}
+            
+            {/* Only show this section if an option is selected */}
+            {selectedOptionIndex !== null && (
+              <View style={styles.inputContainer}>
+                {visibility === 'challenge' && (
+                  <View style={styles.toggleContainer}>
+                    <ThemedText style={styles.toggleLabel}>
+                      Bet with non-monetary items
+                    </ThemedText>
+                    <Switch
+                      value={useNonMonetaryWager}
+                      onValueChange={setUseNonMonetaryWager}
+                      trackColor={{ false: '#ccc', true: Colors.light.tint }}
+                      thumbColor="#fff"
+                    />
+                  </View>
+                )}
+                
+                {useNonMonetaryWager && visibility === 'challenge' ? (
+                  <>
+                    <ThemedText style={styles.inputLabel}>Wager Type</ThemedText>
+                    <TextInput
+                      style={styles.textInput}
+                      value={nonMonetaryWager.type}
+                      onChangeText={handleNonMonetaryTypeChange}
+                      placeholder="e.g. Drinks, Dinner, Coffee"
+                      placeholderTextColor="#888"
+                    />
+                    
+                    <ThemedText style={styles.inputLabel}>Description</ThemedText>
+                    <TextInput
+                      style={styles.textInput}
+                      value={nonMonetaryWager.description}
+                      onChangeText={handleNonMonetaryDescriptionChange}
+                      placeholder="e.g. 1 round of drinks"
+                      placeholderTextColor="#888"
+                      multiline
+                    />
+                  </>
+                ) : (
+                  <>
+                    <ThemedText style={styles.inputLabel}>Initial Bet Amount</ThemedText>
+                    <View style={styles.wagerInputContainer}>
+                      <ThemedText style={styles.currencySymbol}>$</ThemedText>
+                      <TextInput
+                        style={styles.wagerInput}
+                        value={initialBetAmount}
+                        onChangeText={handleInitialBetAmountChange}
+                        placeholder="10.00"
+                        placeholderTextColor="#888"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+          </ThemedView>
+
+          {/* Visibility options */}
+          <ThemedView style={styles.sectionContainer}>
+            <ThemedText style={styles.sectionTitle}>Who can see this bet?</ThemedText>
+            <View style={styles.visibilityContainer}>
+              <TouchableOpacity 
+                style={[
+                  styles.visibilityOption,
+                  visibility === 'public' && styles.activeVisibilityOption
+                ]}
+                onPress={() => handleVisibilityChange('public')}
+              >
+                <Ionicons 
+                  name="globe-outline" 
+                  size={24} 
+                  color={visibility === 'public' ? Colors.light.tint : '#888'} 
+                />
+                <ThemedText style={styles.visibilityOptionText}>Public</ThemedText>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.visibilityOption,
+                  visibility === 'friends_only' && styles.activeVisibilityOption
+                ]}
+                onPress={() => handleVisibilityChange('friends_only')}
+              >
+                <Ionicons 
+                  name="people-outline" 
+                  size={24} 
+                  color={visibility === 'friends_only' ? Colors.light.tint : '#888'} 
+                />
+                <ThemedText style={styles.visibilityOptionText}>Friends Only</ThemedText>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.visibilityOption,
+                  visibility === 'challenge' && styles.activeVisibilityOption
+                ]}
+                onPress={() => handleVisibilityChange('challenge')}
+              >
+                <Ionicons 
+                  name="flame-outline" 
+                  size={24} 
+                  color={visibility === 'challenge' ? Colors.light.tint : '#888'} 
+                />
+                <ThemedText style={styles.visibilityOptionText}>Challenge</ThemedText>
+              </TouchableOpacity>
+            </View>
+            
+            {(visibility === 'friends_only' || visibility === 'challenge') && (
+              <ThemedView style={styles.friendsContainer}>
+                <ThemedText style={styles.friendsTitle}>
+                  {visibility === 'challenge' 
+                    ? 'Select a friend to challenge:' 
+                    : 'Select friends who can see this bet:'}
+                </ThemedText>
+                
+                {friends.length === 0 ? (
+                  <ThemedText style={styles.noFriendsText}>
+                    No friends available. Try again later.
+                  </ThemedText>
+                ) : (
+                  <FlatList
+                    data={friends}
+                    renderItem={renderFriendItem}
+                    keyExtractor={(item) => item.user_id}
+                    horizontal={visibility === 'challenge'}
+                    numColumns={visibility === 'friends_only' ? 2 : undefined}
+                    showsHorizontalScrollIndicator={false}
+                  />
+                )}
+              </ThemedView>
+            )}
+          </ThemedView>
+          
+          {/* Error message */}
+          {error ? (
+            <ThemedText style={styles.errorText}>{error}</ThemedText>
+          ) : null}
+        </ThemedView>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -570,297 +920,327 @@ const { width } = Dimensions.get('window');
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
   },
-  scrollContainer: {
+  scrollView: {
     flex: 1,
-    width: '100%',
   },
-  scrollContentContainer: {
-    flexGrow: 1,
+  scrollContent: {
+    paddingBottom: 40,
   },
   formContainer: {
-    flex: 1,
-    paddingBottom: 40, // Extra padding at bottom for better scrolling
+    padding: 16,
   },
-  dragIndicator: {
-    width: 40,
-    height: 5,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderRadius: 2.5,
-    alignSelf: 'center',
-    marginVertical: 10,
-  },
-  headerGradient: {
-    padding: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  errorContainer: {
+  header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 10,
-    backgroundColor: 'rgba(255,77,77,0.1)',
-    padding: 10,
-    borderRadius: 8,
+    marginBottom: 16,
   },
-  errorText: {
-    color: '#ff4d4d',
-    fontSize: 14,
-    marginLeft: 8,
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
   },
-  balanceContainer: {
-    alignItems: 'center',
-    marginTop: 10,
+  cancelButton: {
+    padding: 8,
   },
-  balanceContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  createButton: {
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 20,
   },
-  balanceText: {
-    fontSize: 14,
-    marginLeft: 8,
+  disabledButton: {
+    opacity: 0.6,
+  },
+  createButtonText: {
     color: '#fff',
     fontWeight: '600',
   },
-  formContent: {
-    padding: 20,
+  balanceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 20,
   },
-  inputGroup: {
+  balanceText: {
+    marginLeft: 8,
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  sectionContainer: {
     marginBottom: 24,
   },
-  label: {
-    fontSize: 16,
+  sectionTitle: {
+    fontSize: 18,
     fontWeight: '600',
-    marginBottom: 8,
-    color: '#fff',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
-    padding: 12,
-    color: '#fff',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    fontSize: 16,
-  },
-  optionContainer: {
     marginBottom: 12,
-  },
-  optionInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  optionInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
-    padding: 12,
-    color: '#fff',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    fontSize: 16,
-  },
-  removeButton: {
-    marginLeft: 8,
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  addButtonText: {
-    marginLeft: 8,
     color: Colors.light.tint,
-    fontWeight: '600',
   },
-  optionSelectButton: {
-    backgroundColor: '#333',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginTop: 8,
-    alignItems: 'center',
-  },
-  selectedOption: {
-    backgroundColor: Colors.light.tint,
-  },
-  optionSelectText: {
-    color: '#fff',
+  sectionSubtitle: {
     fontSize: 14,
-    fontWeight: '600',
+    color: '#666',
+    marginBottom: 16,
   },
-  betAmountContainer: {
+  inputContainer: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    minHeight: 48,
+  },
+  wagerInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-    position: 'relative',
-  },
-  betAmountInput: {
-    flex: 1,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
-    padding: 12,
-    paddingRight: 30,
-    color: '#fff',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    fontSize: 16,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
+    backgroundColor: '#fff',
   },
-  currencyContainer: {
-    position: 'absolute',
-    right: 12,
-  },
-  currencyText: {
+  currencySymbol: {
     fontSize: 16,
+    fontWeight: '600',
+    paddingLeft: 12,
     color: '#888',
   },
-  selectedBetContainer: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+  wagerInput: {
+    flex: 1,
     padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  selectedBetText: {
-    fontSize: 14,
-    color: '#fff',
+    fontSize: 16,
   },
   datePickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
     padding: 12,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: '#fff',
   },
   dateText: {
     marginLeft: 8,
-    color: '#fff',
     fontSize: 16,
+  },
+  helperText: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 16,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.01)',
+  },
+  toggleLabel: {
+    fontSize: 16,
+    fontWeight: '500',
   },
   visibilityContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 16,
   },
   visibilityOption: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
     marginHorizontal: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: '#fff',
   },
-  selectedVisibility: {
-    backgroundColor: `${Colors.light.tint}30`,
+  activeVisibilityOption: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
     borderColor: Colors.light.tint,
   },
-  visibilityText: {
-    marginTop: 4,
-    color: '#888',
+  visibilityOptionText: {
+    marginTop: 8,
     fontSize: 14,
+    fontWeight: '500',
   },
-  selectedVisibilityText: {
-    color: '#fff',
-    fontWeight: '600',
+  friendsContainer: {
+    marginTop: 8,
   },
-  friendsList: {
-    maxHeight: 200,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  friendsTitle: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 12,
   },
   friendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    padding: 8,
+    margin: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: '#fff',
+    width: '48%',
   },
   selectedFriendItem: {
-    backgroundColor: `${Colors.light.tint}20`,
-  },
-  friendInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderColor: Colors.light.tint,
   },
   friendAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 8,
   },
   friendName: {
     fontSize: 14,
-    color: '#fff',
+    flex: 1,
   },
   checkboxContainer: {
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 8,
   },
-  emptyText: {
-    padding: 16,
+  noFriendsText: {
+    fontSize: 14,
+    color: '#888',
     textAlign: 'center',
-    color: 'rgba(255,255,255,0.7)',
+    padding: 16,
   },
-  buttonContainer: {
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  betTypeContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 20,
+    marginBottom: 16,
   },
-  cancelButton: {
+  betTypeButton: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    padding: 16,
-    marginRight: 8,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginHorizontal: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  cancelButtonText: {
-    color: '#fff',
-    fontSize: 16,
+  activeBetTypeButton: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+    borderColor: Colors.light.tint,
+  },
+  betTypeText: {
+    fontSize: 14,
+    marginLeft: 6,
+    color: '#555',
+  },
+  activeBetTypeText: {
+    color: Colors.light.tint,
     fontWeight: '600',
   },
-  createButton: {
-    flex: 2,
-    backgroundColor: Colors.light.tint,
-    borderRadius: 8,
-    padding: 16,
+  lineValueContainer: {
+    marginBottom: 8,
+  },
+  lineValueInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    minHeight: 48,
+  },
+  lineValueHelper: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  optionContainer: {
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.01)',
+  },
+  optionInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  optionInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+  },
+  disabledOptionInput: {
+    backgroundColor: 'rgba(0,0,0,0.03)',
+  },
+  removeOptionButton: {
     marginLeft: 8,
-    alignItems: 'center',
+    padding: 8,
   },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 16,
+  optionSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    padding: 8,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+  },
+  selectedOptionSelector: {
+    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+  },
+  optionSelectorText: {
+    fontSize: 14,
+    marginLeft: 4,
+    color: '#666',
+  },
+  selectedOptionText: {
+    color: Colors.light.tint,
     fontWeight: '600',
   },
-  disabledButton: {
-    opacity: 0.5,
+  addOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.01)',
+  },
+  addOptionText: {
+    marginLeft: 8,
+    color: Colors.light.tint,
+    fontWeight: '500',
   },
 });
 
 // Debug note: This component allows users to create a new bet by specifying
+// a description, options with odds, visibility settings, and a closing time 
 // a description, options with odds, visibility settings, and a closing time 
